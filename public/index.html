@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+<title>WildEye — Animal & Bird Detector</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+<style>
+:root {
+  --bg: #080c0a; --s1: #0d1410; --s2: #111a14; --s3: #182019;
+  --bdr: #1f3024; --bdr2: #2a4030;
+  --acc: #39e07a; --warn: #f5c842; --danger: #ff4f3b; --blue: #3ab8f5;
+  --txt: #ddeee3; --mid: #6b9c7a; --dim: #364d3c;
+  --r: 12px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: "Syne", sans-serif; background: var(--bg); color: var(--txt); display: flex; flex-direction: column; }
+
+/* ── TOPBAR ── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 20px; background: rgba(8,12,10,.97);
+  border-bottom: 1px solid var(--bdr); flex-shrink: 0; z-index: 40;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand-icon {
+  width: 36px; height: 36px; border-radius: 10px;
+  background: linear-gradient(135deg, var(--acc), #1aad50);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; box-shadow: 0 0 20px rgba(57,224,122,.3);
+}
+.brand-name {
+  font-size: 1.1rem; font-weight: 800; letter-spacing: -.04em;
+  background: linear-gradient(90deg, var(--acc), #a8f5c8);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.brand-sub { font-family: "JetBrains Mono", monospace; font-size: .46rem; color: var(--dim); letter-spacing: .14em; text-transform: uppercase; }
+.top-pills { display: flex; gap: 8px; }
+.pill {
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 12px; border-radius: 99px;
+  border: 1px solid var(--bdr); background: var(--s1);
+  font-family: "JetBrains Mono", monospace; font-size: .56rem; color: var(--dim);
+}
+.pill-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dim); }
+.pill.live    { border-color: var(--acc); color: var(--acc); }
+.pill.live .pill-dot    { background: var(--acc); box-shadow: 0 0 8px var(--acc); animation: blink 1.4s infinite; }
+.pill.ws-ok   { border-color: var(--blue); color: var(--blue); }
+.pill.ws-ok .pill-dot   { background: var(--blue); box-shadow: 0 0 6px var(--blue); }
+.pill.alerting{ border-color: var(--danger); color: var(--danger); }
+.pill.alerting .pill-dot{ background: var(--danger); animation: blink .5s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+/* ── LAYOUT ── */
+.layout { display: grid; grid-template-columns: 1fr 310px; flex: 1; overflow: hidden; min-height: 0; }
+
+/* ── VIDEO PANEL ── */
+.vpanel {
+  position: relative; background: #000;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; border-right: 1px solid var(--bdr);
+}
+#video  { width: 100%; height: 100%; object-fit: cover; display: none; }
+#canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; display: none; }
+.scanlines { position: absolute; inset: 0; pointer-events: none; z-index: 2;
+  background: repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.03) 3px,rgba(0,0,0,.03) 4px); }
+.corner { position: absolute; width: 28px; height: 28px; border-color: var(--acc); border-style: solid; opacity: 0; transition: opacity .5s; pointer-events: none; z-index: 5; }
+.corner.tl { top:14px; left:14px; border-width:2px 0 0 2px; border-radius:4px 0 0 0; }
+.corner.tr { top:14px; right:14px; border-width:2px 2px 0 0; border-radius:0 4px 0 0; }
+.corner.bl { bottom:14px; left:14px; border-width:0 0 2px 2px; border-radius:0 0 0 4px; }
+.corner.br { bottom:14px; right:14px; border-width:0 2px 2px 0; border-radius:0 0 4px 0; }
+.vpanel.on .corner { opacity: .7; }
+
+.idle-screen { display: flex; flex-direction: column; align-items: center; gap: 16px; color: var(--dim); text-align: center; }
+.idle-orb { width: 100px; height: 100px; border-radius: 50%; border: 2px dashed var(--bdr2);
+  display: flex; align-items: center; justify-content: center; font-size: 40px;
+  animation: float 3.5s ease-in-out infinite;
+  background: radial-gradient(circle at 40% 35%, rgba(57,224,122,.07), transparent 70%); }
+@keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-12px)} }
+.idle-txt { font-weight: 700; font-size: .95rem; color: var(--mid); }
+.idle-sub { font-family: "JetBrains Mono", monospace; font-size: .55rem; color: var(--dim); }
+
+.alert-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  padding: 14px 18px; background: linear-gradient(transparent, rgba(0,0,0,.9));
+  display: flex; align-items: center; gap: 10px; z-index: 10;
+  opacity: 0; transition: opacity .4s;
+}
+.vpanel.on .alert-bar { opacity: 1; }
+.alert-bar.danger { background: linear-gradient(transparent, rgba(200,30,20,.6)); }
+.alert-bar.warn   { background: linear-gradient(transparent, rgba(160,100,0,.5)); }
+.alert-icon { font-size: 1.2rem; }
+.alert-msg  { font-family: "JetBrains Mono", monospace; font-size: .78rem; font-weight: 700; color: var(--txt); }
+.alert-bar.danger .alert-msg { color: #ffb3ad; }
+.alert-bar.warn   .alert-msg { color: var(--warn); }
+
+.flash { position: absolute; inset: 0; z-index: 8; pointer-events: none;
+  background: rgba(255,40,30,.18); opacity: 0; transition: opacity .12s; }
+.flash.on { opacity: 1; }
+
+.loading { position: absolute; inset: 0; background: rgba(8,12,10,.9);
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; z-index: 20; }
+.loading.show { display: flex; }
+.spin { width: 48px; height: 48px; border: 2px solid var(--bdr); border-top-color: var(--acc); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { font-family: "JetBrains Mono", monospace; font-size: .72rem; color: var(--mid); }
+
+/* ── SIDEBAR ── */
+.sidebar { display: flex; flex-direction: column; background: var(--s1); overflow: hidden; }
+.sec { padding: 12px 16px; border-bottom: 1px solid var(--bdr); flex-shrink: 0; }
+.sec-label { font-family: "JetBrains Mono", monospace; font-size: .48rem; color: var(--dim); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 9px; }
+
+.btn { width: 100%; padding: 11px 14px; border-radius: var(--r); border: 1px solid var(--bdr);
+  font-family: "Syne", sans-serif; font-size: .82rem; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 7px; transition: all .2s; }
+.btn-start { background: var(--acc); color: #040a06; border-color: var(--acc); box-shadow: 0 0 18px rgba(57,224,122,.2); }
+.btn-start:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-start:disabled { opacity: .35; cursor: not-allowed; box-shadow: none; transform: none; }
+.btn-stop  { background: transparent; color: var(--danger); border-color: rgba(255,79,59,.3); }
+.btn-stop:hover:not(:disabled) { background: rgba(255,79,59,.08); }
+.btn-stop:disabled { opacity: .3; cursor: not-allowed; }
+.btn-ann   { background: transparent; color: var(--warn); border-color: rgba(245,200,66,.3); font-size: .76rem; }
+.btn-ann:hover:not(:disabled) { background: rgba(245,200,66,.07); }
+.btn-ann:disabled { opacity: .3; cursor: not-allowed; }
+.ctrl { padding: 12px 16px; border-bottom: 1px solid var(--bdr); display: flex; flex-direction: column; gap: 7px; }
+
+.stats-row { display: flex; gap: 6px; }
+.stat-box { flex: 1; background: var(--s2); border: 1px solid var(--bdr); border-radius: 10px; padding: 8px; text-align: center; }
+.stat-val { font-family: "JetBrains Mono", monospace; font-size: .95rem; font-weight: 700; color: var(--acc); }
+.stat-lbl { font-size: .46rem; color: var(--dim); text-transform: uppercase; letter-spacing: .1em; margin-top: 2px; }
+
+.cooldown-row { display: flex; align-items: center; gap: 8px; }
+.cooldown-row label { font-family: "JetBrains Mono", monospace; font-size: .58rem; color: var(--mid); flex: 1; }
+.cooldown-row input[type=range] { flex: 1; accent-color: var(--acc); }
+.cooldown-val { font-family: "JetBrains Mono", monospace; font-size: .6rem; color: var(--acc); min-width: 30px; text-align: right; }
+
+.targets-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.target-chip { display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 8px;
+  border: 1px solid var(--bdr); background: var(--s2); font-size: .72rem; font-weight: 600;
+  cursor: pointer; transition: all .18s; user-select: none; }
+.target-chip:hover { border-color: var(--bdr2); }
+.target-chip.on { border-color: rgba(57,224,122,.5); background: rgba(57,224,122,.08); color: var(--acc); }
+.target-chip .chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+.target-chip.on .chip-dot { background: var(--acc); box-shadow: 0 0 6px var(--acc); }
+
+.list-scroll { flex: 1; overflow-y: auto; padding: 10px 14px; display: flex; flex-direction: column; gap: 7px; min-height: 0; }
+.list-scroll::-webkit-scrollbar { width: 3px; }
+.list-scroll::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 2px; }
+.list-hdr { display: flex; align-items: center; justify-content: space-between; }
+.list-hdr-lbl { font-family: "JetBrains Mono", monospace; font-size: .48rem; color: var(--dim); letter-spacing: .16em; text-transform: uppercase; }
+.list-cnt { font-family: "JetBrains Mono", monospace; font-size: .58rem; padding: 2px 9px; border-radius: 99px;
+  background: rgba(57,224,122,.07); border: 1px solid rgba(57,224,122,.2); color: var(--acc); }
+
+.det-item { padding: 9px 12px; border-radius: 10px; background: var(--s2); border: 1px solid var(--bdr);
+  display: flex; align-items: center; gap: 9px; animation: slideIn .2s ease; }
+@keyframes slideIn { from{opacity:0;transform:translateX(8px)} to{opacity:1;transform:translateX(0)} }
+.det-item.very-close { border-color: rgba(255,79,59,.6); background: rgba(255,40,20,.06); }
+.det-item.close      { border-color: rgba(245,200,66,.5); background: rgba(180,130,0,.05); }
+.det-emoji { font-size: 1.1rem; flex-shrink: 0; }
+.det-info  { flex: 1; min-width: 0; }
+.det-name  { font-weight: 700; font-size: .8rem; text-transform: capitalize; }
+.det-sub   { font-family: "JetBrains Mono", monospace; font-size: .52rem; color: var(--mid); margin-top: 2px; }
+.conf-bar-wrap { height: 2px; background: var(--s3); border-radius: 2px; overflow: hidden; margin-top: 4px; }
+.conf-bar { height: 100%; background: var(--acc); border-radius: 2px; transition: width .3s; }
+.det-item.very-close .conf-bar { background: var(--danger); }
+.det-item.close      .conf-bar { background: var(--warn); }
+.dist-badge { font-family: "JetBrains Mono", monospace; font-size: .5rem; padding: 2px 7px; border-radius: 99px; white-space: nowrap; }
+.db-vc { background: rgba(255,79,59,.2); color: #ff9a91; border: 1px solid rgba(255,79,59,.4); }
+.db-c  { background: rgba(245,200,66,.15); color: var(--warn); border: 1px solid rgba(245,200,66,.35); }
+.db-m  { background: rgba(57,224,122,.08); color: var(--acc); border: 1px solid rgba(57,224,122,.2); }
+.db-f  { background: rgba(54,77,60,.15); color: var(--dim); border: 1px solid var(--bdr); }
+.empty-state { display: flex; flex-direction: column; align-items: center; padding: 24px 12px; gap: 8px; color: var(--dim); font-size: .78rem; text-align: center; }
+.empty-icon  { font-size: 2rem; margin-bottom: 4px; }
+
+/* WS node alert log */
+.node-log { padding: 10px 14px; border-top: 1px solid var(--bdr); max-height: 130px; overflow-y: auto; flex-shrink: 0; }
+.node-log::-webkit-scrollbar { width: 3px; }
+.node-log::-webkit-scrollbar-thumb { background: var(--bdr); border-radius: 2px; }
+.node-log-hdr { font-family: "JetBrains Mono", monospace; font-size: .48rem; color: var(--dim); letter-spacing: .16em; text-transform: uppercase; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.node-log-hdr span { color: var(--blue); }
+.log-entries { display: flex; flex-direction: column; gap: 4px; }
+.log-entry { font-family: "JetBrains Mono", monospace; font-size: .57rem; color: var(--mid); display: flex; gap: 8px; animation: slideIn .2s ease; }
+.log-time { color: var(--dim); flex-shrink: 0; }
+.log-entry.log-danger { color: #ff9a91; }
+.log-entry.log-warn   { color: var(--warn); }
+.log-entry.log-bird   { color: var(--blue); }
+
+/* toasts */
+.toasts { position: fixed; top: 70px; right: 16px; display: flex; flex-direction: column; gap: 6px; z-index: 300; pointer-events: none; }
+.toast { padding: 8px 16px; border-radius: 99px; background: var(--s3); border: 1px solid var(--bdr2);
+  font-family: "JetBrains Mono", monospace; font-size: .65rem; color: var(--txt);
+  animation: toastIn .3s ease, toastOut .3s ease 2.5s forwards; box-shadow: 0 4px 20px rgba(0,0,0,.5); }
+@keyframes toastIn  { from{opacity:0;transform:translateX(12px)} to{opacity:1;transform:translateX(0)} }
+@keyframes toastOut { to{opacity:0;transform:translateX(12px)} }
+
+/* ── MOBILE ── */
+@media (max-width: 680px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: 52vw auto; overflow: visible; flex: none; }
+  html, body { height: auto; overflow: auto; }
+  .vpanel { height: 52vw; border-right: none; border-bottom: 1px solid var(--bdr); }
+  .sidebar { overflow: visible; height: auto; }
+  .list-scroll { max-height: 260px; }
+  .top-pills .pill:nth-child(3) { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-icon">🦅</div>
+    <div>
+      <div class="brand-name">WildEye</div>
+      <div class="brand-sub">Animal & Bird Detector — Node + Browser AI</div>
+    </div>
+  </div>
+  <div class="top-pills">
+    <div class="pill" id="pillCam"><div class="pill-dot"></div><span id="pillCamTxt">CAM OFF</span></div>
+    <div class="pill" id="pillWs"><div class="pill-dot"></div><span id="pillWsTxt">NODE DISCONNECTED</span></div>
+    <div class="pill" id="pillAlert"><div class="pill-dot"></div><span id="pillAlertTxt">QUIET</span></div>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- VIDEO -->
+  <div class="vpanel" id="vpanel">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+    <div class="scanlines"></div>
+    <div class="corner tl"></div><div class="corner tr"></div>
+    <div class="corner bl"></div><div class="corner br"></div>
+    <div class="flash" id="flash"></div>
+
+    <div class="idle-screen" id="idleScreen">
+      <div class="idle-orb">🦅</div>
+      <div class="idle-txt">Camera Offline</div>
+      <div class="idle-sub">Press START · Node server speaks the alerts</div>
+    </div>
+
+    <div class="alert-bar" id="alertBar">
+      <div class="alert-icon" id="alertIcon">📡</div>
+      <div class="alert-msg"  id="alertMsg">Ready — press Start</div>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="spin"></div>
+      <div class="loading-msg" id="loadingMsg">Loading AI model…</div>
+    </div>
+  </div>
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+
+    <div class="ctrl">
+      <button class="btn btn-start" id="btnStart" onclick="startDetection()">▶ &nbsp;Start Detection</button>
+      <button class="btn btn-stop"  id="btnStop"  onclick="stopDetection()" disabled>■ &nbsp;Stop</button>
+      <button class="btn btn-ann"   id="btnAnn"   onclick="reAnnounce()" disabled>🔊 &nbsp;Re-Announce</button>
+    </div>
+
+    <div class="sec">
+      <div class="sec-label">Live Stats</div>
+      <div class="stats-row">
+        <div class="stat-box"><div class="stat-val" id="sFps">—</div><div class="stat-lbl">FPS</div></div>
+        <div class="stat-box"><div class="stat-val" id="sObj">—</div><div class="stat-lbl">Detected</div></div>
+        <div class="stat-box"><div class="stat-val" id="sAlerts">—</div><div class="stat-lbl">Alerts</div></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-label">Alert Cooldown (sent to Node)</div>
+      <div class="cooldown-row">
+        <label>Same-animal gap</label>
+        <input type="range" id="cooldownRange" min="3" max="30" value="8" oninput="updateCooldown(this.value)"/>
+        <span class="cooldown-val" id="cooldownVal">8s</span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-label">Target Animals</div>
+      <div class="targets-grid" id="targetsGrid"></div>
+    </div>
+
+    <div class="list-scroll">
+      <div class="list-hdr">
+        <div class="list-hdr-lbl">Detected Now</div>
+        <div class="list-cnt" id="listCnt">0</div>
+      </div>
+      <div id="detList">
+        <div class="empty-state"><div class="empty-icon">🔍</div>Waiting for detection…</div>
+      </div>
+    </div>
+
+    <!-- Node voice alert log -->
+    <div class="node-log">
+      <div class="node-log-hdr">Node Voice Log <span>🔊</span></div>
+      <div class="log-entries" id="logEntries">
+        <div class="log-entry"><span class="log-time">--:--:--</span><span>Waiting for Node server…</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════
+const CONF_THRESH    = 0.55;  // raised: reduces false positives like lion→cat
+const ANNOUNCE_INT   = 4000;
+const DETECT_EVERY_N = 2;
+
+// Minimum fraction of frame area a detection must cover to be considered real
+// (filters out tiny detections inside phone screens / pictures on walls)
+const MIN_AREA_RATIO = 0.018; // ~2% of frame
+
+const TARGETS = {
+  bird:     { emoji:"🐦", priority:1, group:"bird",   realLabel:"Bird"     },
+  elephant: { emoji:"🐘", priority:0, group:"animal", realLabel:"Elephant" },
+  cow:      { emoji:"🐄", priority:1, group:"animal", realLabel:"Cow"      },
+  sheep:    { emoji:"🐑", priority:2, group:"animal", realLabel:"Sheep / Goat" },
+  dog:      { emoji:"🐕", priority:1, group:"animal", realLabel:"Dog"      },
+  // cat = COCO's closest match for lion, tiger, leopard, cheetah
+  // We show the broader label so user knows it's ambiguous
+  cat:      { emoji:"🐱", priority:3, group:"animal", realLabel:"Cat / Wild Feline" },
+  horse:    { emoji:"🐎", priority:1, group:"animal", realLabel:"Horse"    },
+  zebra:    { emoji:"🦓", priority:1, group:"animal", realLabel:"Zebra"    },
+  giraffe:  { emoji:"🦒", priority:1, group:"animal", realLabel:"Giraffe"  },
+  bear:     { emoji:"🐻", priority:0, group:"animal", realLabel:"Bear"     },
+};
+
+const DIST_COL = { "very close":"#ff4f3b", "close":"#f5c842", "moderate":"#39e07a", "far":"#364d3c" };
+
+// ═══════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════
+let model      = null;
+let stream     = null;
+let running    = false;
+let animId     = null;
+let frameCount = 0, fps = 0, fpsTimer = 0;
+let totalAlerts = 0;
+let lastAnnounce = 0, lastMsgKey = "";
+let enabledTargets = new Set(Object.keys(TARGETS));
+let ws = null;
+
+const video  = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+
+// ═══════════════════════════════════════════════
+//  WEBSOCKET — connect to Node server
+// ═══════════════════════════════════════════════
+function connectWS() {
+  const url = `ws://${location.host}`;
+  ws = new WebSocket(url);
+
+  ws.onopen = () => {
+    setPill("ws", "ok");
+    toast("Connected to Node server ✅");
+    addLog("Connected to Node server", "");
+    // Send current cooldown
+    ws.send(JSON.stringify({ type: "setCooldown", value: parseInt(document.getElementById("cooldownRange").value) }));
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === "alert") {
+      // Node spoke this alert — show it in the log
+      totalAlerts++;
+      document.getElementById("sAlerts").textContent = totalAlerts;
+      const cls = data.label === "bird" ? "log-bird"
+                : (data.label === "elephant" || data.label === "bear") ? "log-danger"
+                : "log-warn";
+      addLog(`🔊 Node spoke: ${data.msg}`, cls);
+      flashDanger(data.label === "elephant" || data.label === "bear");
+      setPillAlert("alerting");
+      setTimeout(() => setPillAlert("quiet"), 3000);
+    }
+    if (data.type === "connected") {
+      addLog("Node: " + data.msg, "");
+    }
+  };
+
+  ws.onclose = () => {
+    setPill("ws", "off");
+    addLog("Node server disconnected", "log-danger");
+    // Reconnect after 3s
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    setPill("ws", "off");
+  };
+}
+
+function sendDetections(detections) {
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: "detections", detections }));
+}
+
+function updateCooldown(val) {
+  document.getElementById("cooldownVal").textContent = val + "s";
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: "setCooldown", value: parseInt(val) }));
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  TARGET CHIPS
+// ═══════════════════════════════════════════════
+function buildTargetsUI() {
+  const grid = document.getElementById("targetsGrid");
+  grid.innerHTML = "";
+  for (const [key, t] of Object.entries(TARGETS)) {
+    const chip = document.createElement("div");
+    chip.className = "target-chip on";
+    chip.dataset.key = key;
+    chip.innerHTML = `<div class="chip-dot"></div>${t.emoji} ${key}`;
+    chip.onclick = () => {
+      if (enabledTargets.has(key)) { enabledTargets.delete(key); chip.classList.remove("on"); }
+      else                         { enabledTargets.add(key);    chip.classList.add("on"); }
+    };
+    grid.appendChild(chip);
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  SCREEN-INSIDE-SCREEN FILTER
+//  Detects if a bbox is sitting inside another bbox that looks like
+//  a phone/tablet/monitor (tall rect covering significant frame area).
+//  If so, it's an animal on a screen — ignore it.
+// ═══════════════════════════════════════════════
+function isInsideScreen(bbox, allPreds, vw, vh) {
+  const [bx, by, bw, bh] = bbox;
+  const bCx = bx + bw/2, bCy = by + bh/2;
+
+  // Check if any other detected object is a "cell phone", "laptop", "tv",
+  // "book" (acts as picture frame), or any large rectangle that could be a screen
+  for (const p of allPreds) {
+    if (p.class === "cell phone" || p.class === "laptop" || p.class === "tv" ||
+        p.class === "book" || p.class === "remote") {
+      const [sx, sy, sw, sh] = p.bbox;
+      // Is our animal bbox centre inside the screen bbox?
+      if (bCx > sx && bCx < sx+sw && bCy > sy && bCy < sy+sh) return true;
+    }
+    // Generic: any bbox that is much larger and contains ours could be a screen
+    const [sx, sy, sw, sh] = p.bbox;
+    const screenArea = sw * sh, frameArea = vw * vh;
+    if (screenArea / frameArea > 0.08 && p !== { bbox }) {
+      const margin = 10;
+      if (bx > sx-margin && by > sy-margin && bx+bw < sx+sw+margin && by+bh < sy+sh+margin) {
+        // Our bbox is fully inside a larger bbox
+        if (screenArea > bw*bh * 2.5) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ═══════════════════════════════════════════════
+//  DISTANCE / POSITION
+// ═══════════════════════════════════════════════
+function estimateDistance(bbox, fw, fh) {
+  const r = (bbox[2] * bbox[3]) / (fw * fh);
+  if (r > 0.35) return "very close";
+  if (r > 0.14) return "close";
+  if (r > 0.05) return "moderate";
+  return "far";
+}
+function getPosition(bbox, fw) {
+  const cx = bbox[0] + bbox[2] / 2;
+  return cx < fw / 3 ? "left" : cx > 2 * fw / 3 ? "right" : "center";
+}
+
+// ═══════════════════════════════════════════════
+//  DRAW BOXES
+// ═══════════════════════════════════════════════
+function drawBoxes(dets) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (const d of dets) {
+    const [x, y, w, h] = d.bbox;
+    const color = DIST_COL[d.distance] || "#364d3c";
+    ctx.strokeStyle = color; ctx.lineWidth = d.distance === "very close" ? 3 : 2;
+    ctx.shadowColor = color; ctx.shadowBlur = 8;
+    ctx.strokeRect(x, y, w, h);
+    ctx.shadowBlur = 0;
+    const cs = 14;
+    ctx.lineWidth = 3; ctx.strokeStyle = color;
+    [[x,y+cs,x,y,x+cs,y],[x+w-cs,y,x+w,y,x+w,y+cs],
+     [x,y+h-cs,x,y+h,x+cs,y+h],[x+w-cs,y+h,x+w,y+h,x+w,y+h-cs]]
+    .forEach(([x1,y1,x2,y2,x3,y3]) => { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.stroke(); });
+    const t = TARGETS[d.label];
+    const ltext = `${t?.emoji||"📦"} ${d.displayLabel||d.label} · ${d.distance} · ${Math.round(d.confidence*100)}%`;
+    ctx.font = "700 11px JetBrains Mono,monospace";
+    const tw = ctx.measureText(ltext).width;
+    ctx.fillStyle = color; ctx.fillRect(x, y - 22, tw + 12, 20);
+    ctx.fillStyle = "#040a06"; ctx.textAlign = "left";
+    ctx.fillText(ltext, x + 6, y - 7);
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  DETECTION LOOP
+// ═══════════════════════════════════════════════
+let detectedObjs = [];
+
+async function detectionLoop(timestamp) {
+  if (!running) return;
+  frameCount++;
+  if (!fpsTimer) fpsTimer = timestamp;
+  const elapsed = timestamp - fpsTimer;
+  if (elapsed >= 1000) { fps = Math.round(frameCount * 1000 / elapsed); frameCount = 0; fpsTimer = timestamp; }
+
+  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  }
+  const vw = video.videoWidth || 1, vh = video.videoHeight || 1;
+
+  if (frameCount % DETECT_EVERY_N === 0 && model && video.readyState >= 2) {
+    try {
+      const allPreds = await model.detect(video);
+      detectedObjs = allPreds
+        .filter(p => {
+          if (p.score < CONF_THRESH) return false;
+          if (!TARGETS[p.class] || !enabledTargets.has(p.class)) return false;
+          // Filter: too small — likely a photo/thumbnail, not a real animal
+          const areaRatio = (p.bbox[2] * p.bbox[3]) / (vw * vh);
+          if (areaRatio < MIN_AREA_RATIO) return false;
+          // Filter: sitting inside a screen/phone/laptop
+          if (isInsideScreen(p.bbox, allPreds, vw, vh)) return false;
+          return true;
+        })
+        .map(p => ({
+          label:      p.class,
+          displayLabel: TARGETS[p.class]?.realLabel || p.class,
+          confidence: p.score,
+          bbox:       p.bbox,
+          distance:   estimateDistance(p.bbox, vw, vh),
+          position:   getPosition(p.bbox, vw),
+        }))
+        .sort((a, b) => (TARGETS[a.label]?.priority||5) - (TARGETS[b.label]?.priority||5));
+
+      // Send to Node for voice alerts
+      if (detectedObjs.length) sendDetections(detectedObjs);
+    } catch (e) {}
+  }
+
+  drawBoxes(detectedObjs);
+  updateUI();
+  animId = requestAnimationFrame(detectionLoop);
+}
+
+// ═══════════════════════════════════════════════
+//  UI
+// ═══════════════════════════════════════════════
+let _lastRender = 0;
+function updateUI() {
+  document.getElementById("sFps").textContent = fps || "—";
+  document.getElementById("sObj").textContent = detectedObjs.length;
+  document.getElementById("listCnt").textContent = detectedObjs.length;
+
+  const top = detectedObjs[0];
+  const bar = document.getElementById("alertBar");
+  const ico = document.getElementById("alertIcon");
+  const msg = document.getElementById("alertMsg");
+  if (!detectedObjs.length) {
+    bar.className = "alert-bar"; ico.textContent = "📡"; msg.textContent = "Scanning… no animals detected";
+  } else {
+    const isUrgent = top.distance === "very close" || TARGETS[top.label]?.priority === 0;
+    const isWarn   = top.distance === "close";
+    bar.className = "alert-bar" + (isUrgent ? " danger" : isWarn ? " warn" : "");
+    ico.textContent = isUrgent ? "⚠️" : isWarn ? "⚡" : "📍";
+    const dir = top.position === "left" ? " · left" : top.position === "right" ? " · right" : " · center";
+    msg.textContent = `${TARGETS[top.label]?.emoji||"📦"} ${top.displayLabel||top.label} · ${top.distance}${dir}`;
+  }
+
+  const now = Date.now();
+  if (now - _lastRender < 350) return;
+  _lastRender = now;
+
+  const list = document.getElementById("detList");
+  if (!detectedObjs.length) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div>Scanning…</div>';
+    return;
+  }
+  list.innerHTML = detectedObjs.map(d => {
+    const t  = TARGETS[d.label];
+    const dc = {"very close":"db-vc","close":"db-c","moderate":"db-m","far":"db-f"}[d.distance]||"db-f";
+    const cls = d.distance==="very close"?"det-item very-close":d.distance==="close"?"det-item close":"det-item";
+    const pct = Math.round(d.confidence * 100);
+    const dir = d.position==="left"?"Left":d.position==="right"?"Right":"Center";
+    return `<div class="${cls}">
+      <div class="det-emoji">${t?.emoji||"📦"}</div>
+      <div class="det-info">
+        <div class="det-name">${d.displayLabel||d.label}</div>
+        <div class="det-sub">${dir} · ${pct}% · ${d.distance}</div>
+        <div class="conf-bar-wrap"><div class="conf-bar" style="width:${pct}%"></div></div>
+      </div>
+      <div class="dist-badge ${dc}">${d.distance}</div>
+    </div>`;
+  }).join("");
+}
+
+function addLog(msg, cls) {
+  const log = document.getElementById("logEntries");
+  const now = new Date();
+  const t   = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}:${String(now.getSeconds()).padStart(2,"0")}`;
+  const el  = document.createElement("div");
+  el.className = `log-entry ${cls||""}`;
+  el.innerHTML = `<span class="log-time">${t}</span><span>${msg}</span>`;
+  log.insertBefore(el, log.firstChild);
+  while (log.children.length > 40) log.lastChild.remove();
+}
+
+function setPill(which, state) {
+  if (which === "cam") {
+    const p = document.getElementById("pillCam");
+    p.className = "pill" + (state==="live"?" live":"");
+    document.getElementById("pillCamTxt").textContent = state==="live"?"CAM LIVE":"CAM OFF";
+  } else if (which === "ws") {
+    const p = document.getElementById("pillWs");
+    p.className = "pill" + (state==="ok"?" ws-ok":"");
+    document.getElementById("pillWsTxt").textContent = state==="ok"?"NODE CONNECTED":"NODE DISCONNECTED";
+  }
+}
+
+function setPillAlert(state) {
+  const p   = document.getElementById("pillAlert");
+  const txt = document.getElementById("pillAlertTxt");
+  p.className = "pill" + (state==="alerting"?" alerting":"");
+  txt.textContent = state==="alerting"?"ALERTING!":"QUIET";
+}
+
+function flashDanger(hard=false) {
+  const el = document.getElementById("flash");
+  el.style.background = hard ? "rgba(255,40,30,.28)" : "rgba(255,180,30,.15)";
+  el.classList.add("on");
+  setTimeout(() => el.classList.remove("on"), 500);
+}
+
+function reAnnounce() {
+  if (!detectedObjs.length) return;
+  sendDetections(detectedObjs.map(d => ({ ...d, _force: true })));
+  toast("Re-announced to Node 🔊");
+}
+
+function showLoading(show, txt="") {
+  document.getElementById("loading").classList.toggle("show", show);
+  if (txt) document.getElementById("loadingMsg").textContent = txt;
+}
+
+function toast(msg) {
+  const c=document.getElementById("toasts"), t=document.createElement("div");
+  t.className="toast"; t.textContent=msg; c.appendChild(t);
+  setTimeout(() => t.remove(), 2900);
+}
+
+// ═══════════════════════════════════════════════
+//  SYSTEM CONTROL
+// ═══════════════════════════════════════════════
+async function startDetection() {
+  if (running) return;
+  showLoading(true, "Requesting camera…");
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+    }).catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
+  } catch (e) { toast("Camera denied ❌"); showLoading(false); return; }
+
+  video.srcObject = stream;
+  await video.play();
+
+  if (!model) {
+    showLoading(true, "Loading AI model… (first run ~20s)");
+    try { model = await cocoSsd.load({ base: "mobilenet_v2" }); }
+    catch (e) { toast("Model failed ❌"); showLoading(false); return; }
+  }
+  showLoading(false);
+  running = true; frameCount = 0; fpsTimer = 0; fps = 0;
+  detectedObjs = []; lastAnnounce = 0; lastMsgKey = "";
+  video.style.display = "block"; canvas.style.display = "block";
+  document.getElementById("idleScreen").style.display = "none";
+  document.getElementById("vpanel").classList.add("on");
+  setPill("cam", "live");
+  document.getElementById("btnStart").disabled = true;
+  document.getElementById("btnStop").disabled  = false;
+  document.getElementById("btnAnn").disabled   = false;
+  animId = requestAnimationFrame(detectionLoop);
+  toast("Detection started ✅");
+  addLog("Browser AI started — sending to Node", "");
+}
+
+function stopDetection() {
+  if (!running) return;
+  running = false;
+  if (animId) { cancelAnimationFrame(animId); animId = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.style.display = "none"; canvas.style.display = "none"; video.srcObject = null;
+  document.getElementById("idleScreen").style.display = "flex";
+  document.getElementById("vpanel").classList.remove("on");
+  setPill("cam", "off");
+  document.getElementById("btnStart").disabled = false;
+  document.getElementById("btnStop").disabled  = true;
+  document.getElementById("btnAnn").disabled   = true;
+  document.getElementById("detList").innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div>Stopped</div>';
+  ["sFps","sObj","sAlerts"].forEach(id => document.getElementById(id).textContent = "—");
+  toast("Stopped ⏹");
+  addLog("Detection stopped", "");
+}
+
+// ═══════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════
+window.addEventListener("load", () => {
+  buildTargetsUI();
+  connectWS();
+});
+</script>
+</body>
+</html>

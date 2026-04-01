@@ -1,0 +1,14 @@
+{
+  "name": "animal-bird-detector",
+  "version": "2.0.0",
+  "description": "Animal & Bird Detector — AI in browser, voice alerts via Node",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "say": "^0.16.0",
+    "ws": "^8.16.0"
+  }
+}
