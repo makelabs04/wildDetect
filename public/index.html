@@ -197,6 +197,37 @@ body { font-family: "Syne", sans-serif; background: var(--bg); color: var(--txt)
 @keyframes toastIn  { from{opacity:0;transform:translateX(12px)} to{opacity:1;transform:translateX(0)} }
 @keyframes toastOut { to{opacity:0;transform:translateX(12px)} }
 
+
+/* ── ESP32 STATUS PILL ── */
+.pill.esp-ok   { border-color: #22c55e; color: #22c55e; }
+.pill.esp-ok .pill-dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; animation: blink 1.4s infinite; }
+
+/* ── ARDUINO CODE PANEL ── */
+.arduino-panel {
+  margin: 20px; border-radius: 14px;
+  border: 1px solid var(--bdr); background: var(--s1);
+  overflow: hidden;
+}
+.arduino-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; background: #1a2e3b; cursor: pointer;
+  user-select: none;
+}
+.arduino-hdr-left { display: flex; align-items: center; gap: 10px; }
+.arduino-hdr-icon { font-size: 1.1rem; }
+.arduino-hdr-title { font-family: "JetBrains Mono", monospace; font-size: .75rem; font-weight: 700; color: #00adee; }
+.arduino-hdr-sub   { font-family: "JetBrains Mono", monospace; font-size: .52rem; color: #8faec0; margin-top: 2px; }
+.arduino-toggle { font-family: "JetBrains Mono", monospace; font-size: .6rem; color: #8faec0; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+.arduino-body { display: none; }
+.arduino-body.open { display: block; }
+.arduino-info { padding: 12px 16px; background: #f0f4f8; border-bottom: 1px solid var(--bdr); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.arduino-info-txt { font-family: "JetBrains Mono", monospace; font-size: .6rem; color: var(--mid); flex: 1; min-width: 200px; }
+.arduino-copy-btn { padding: 6px 14px; border-radius: 8px; background: var(--acc); color: #fff; border: none; font-family: "Syne", sans-serif; font-size: .72rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.arduino-copy-btn:hover { filter: brightness(1.1); }
+.arduino-code { background: #0d1b2a; color: #c9e4f5; font-family: "JetBrains Mono", monospace; font-size: .6rem; line-height: 1.6; padding: 16px; margin: 0; overflow-x: auto; max-height: 320px; overflow-y: auto; white-space: pre; }
+.arduino-code::-webkit-scrollbar { width: 4px; height: 4px; }
+.arduino-code::-webkit-scrollbar-thumb { background: #2a4a6b; border-radius: 2px; }
+
 /* ── MOBILE ── */
 @media (max-width: 680px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: 52vw auto; overflow: visible; flex: none; }
@@ -222,6 +253,7 @@ body { font-family: "Syne", sans-serif; background: var(--bg); color: var(--txt)
     <div class="pill" id="pillCam"><div class="pill-dot"></div><span id="pillCamTxt">CAM OFF</span></div>
     <div class="pill" id="pillWs"><div class="pill-dot"></div><span id="pillWsTxt">NODE DISCONNECTED</span></div>
     <div class="pill" id="pillAlert"><div class="pill-dot"></div><span id="pillAlertTxt">QUIET</span></div>
+    <div class="pill" id="pillEsp"><div class="pill-dot"></div><span id="pillEspTxt">ESP32 OFFLINE</span></div>
   </div>
 </div>
 
@@ -303,6 +335,121 @@ body { font-family: "Syne", sans-serif; background: var(--bg); color: var(--txt)
       </div>
     </div>
 
+  </div>
+</div>
+
+
+<div class="arduino-panel">
+  <div class="arduino-hdr" onclick="toggleArduino()">
+    <div class="arduino-hdr-left">
+      <div class="arduino-hdr-icon">🔌</div>
+      <div>
+        <div class="arduino-hdr-title">ESP32 Arduino Sketch</div>
+        <div class="arduino-hdr-sub">Flash this to your ESP32 — Green = clear, Red blink = animal detected</div>
+      </div>
+    </div>
+    <div class="arduino-toggle" id="arduinoToggleTxt">▼ Show Code</div>
+  </div>
+  <div class="arduino-body" id="arduinoBody">
+    <div class="arduino-info">
+      <div class="arduino-info-txt">
+        📦 Requires: <strong>ArduinoJson</strong> (Library Manager)<br>
+        📌 Pins: Green LED→26, Red LED→27, Buzzer→25 (set -1 if none)<br>
+        🌐 Edit SSID, PASSWORD before flashing
+      </div>
+      <button class="arduino-copy-btn" onclick="copyArduino()">📋 Copy Code</button>
+    </div>
+    <pre class="arduino-code" id="arduinoCode">// ╔══════════════════════════════════════════════════════╗
+// ║   WildDetect ESP32 — LED Indicator                   ║
+// ║   Green SOLID = No animal detected                   ║
+// ║   Red BLINK   = Animal / Bird detected!              ║
+// ╚══════════════════════════════════════════════════════╝
+#include &lt;WiFi.h&gt;
+#include &lt;HTTPClient.h&gt;
+#include &lt;ArduinoJson.h&gt;   // Library Manager → ArduinoJson by Bblanchon
+
+const char* SSID       = "YOUR_WIFI_SSID";
+const char* PASSWORD   = "YOUR_WIFI_PASSWORD";
+const char* SERVER_URL = "https://wildeye.makelearners.com/api/led";
+
+#define PIN_GREEN   26
+#define PIN_RED     27
+#define PIN_BUZZER  25    // set to -1 if no buzzer
+#define POLL_INTERVAL_MS  1000
+
+enum LedMode { MODE_GREEN, MODE_RED };
+LedMode currentMode = MODE_GREEN;
+unsigned long blinkNextMs = 0;
+bool blinkOn = false;
+const unsigned long BLINK_HALF_MS = 250;
+
+struct BuzzTask { int left=0; bool on=false; unsigned long nextMs=0; } buzz;
+String lastLedCode = "";
+unsigned long lastPollMs = 0;
+
+void allOff() {
+  digitalWrite(PIN_GREEN,LOW); digitalWrite(PIN_RED,LOW);
+  if(PIN_BUZZER&gt;=0) digitalWrite(PIN_BUZZER,LOW);
+}
+void applyGreen() { currentMode=MODE_GREEN; allOff(); digitalWrite(PIN_GREEN,HIGH); }
+void applyRed()   { currentMode=MODE_RED; blinkOn=true; blinkNextMs=millis(); allOff(); digitalWrite(PIN_RED,HIGH); }
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PIN_GREEN,OUTPUT); pinMode(PIN_RED,OUTPUT);
+  if(PIN_BUZZER&gt;=0) pinMode(PIN_BUZZER,OUTPUT);
+  allOff();
+  WiFi.begin(SSID, PASSWORD);
+  Serial.print("WiFi connecting");
+  unsigned long t=millis();
+  while(WiFi.status()!=WL_CONNECTED){
+    delay(300); Serial.print(".");
+    digitalWrite(PIN_GREEN,!digitalRead(PIN_GREEN));
+    if(millis()-t&gt;20000){ ESP.restart(); }
+  }
+  allOff();
+  for(int i=0;i&lt;3;i++){ digitalWrite(PIN_GREEN,HIGH);digitalWrite(PIN_RED,HIGH);delay(120);allOff();delay(120); }
+  applyGreen();
+  Serial.println("\n[OK] Ready");
+}
+
+void loop() {
+  if(millis()-lastPollMs&gt;=POLL_INTERVAL_MS){ lastPollMs=millis(); pollServer(); }
+  runLed(); runBuzz();
+}
+
+void pollServer() {
+  if(WiFi.status()!=WL_CONNECTED){ WiFi.reconnect(); return; }
+  HTTPClient http; http.begin(SERVER_URL); http.setTimeout(3000);
+  int code=http.GET();
+  if(code!=200){ http.end(); return; }
+  String body=http.getString(); http.end();
+  StaticJsonDocument&lt;256&gt; doc;
+  if(deserializeJson(doc,body)||!doc["ok"]) return;
+  String ledCode=doc["data"]["led_code"]|"G";
+  String label=doc["data"]["label"]|"";
+  int buzzCount=doc["data"]["buzz"]|0;
+  if(ledCode==lastLedCode) return;
+  lastLedCode=ledCode;
+  if(ledCode=="G"){ applyGreen(); Serial.println("[LED] GREEN"); }
+  else if(ledCode=="R"){
+    applyRed(); Serial.println("[LED] RED BLINK — "+label);
+    if(buzzCount&gt;0&amp;&amp;PIN_BUZZER&gt;=0){ buzz.left=buzzCount; buzz.on=false; buzz.nextMs=millis()+100; }
+  }
+}
+
+void runLed() {
+  if(currentMode==MODE_GREEN) return;
+  unsigned long now=millis();
+  if(now&gt;=blinkNextMs){ blinkOn=!blinkOn; digitalWrite(PIN_RED,blinkOn?HIGH:LOW); blinkNextMs=now+BLINK_HALF_MS; }
+}
+
+void runBuzz() {
+  if(buzz.left&lt;=0||PIN_BUZZER&lt;0) return;
+  unsigned long now=millis(); if(now&lt;buzz.nextMs) return;
+  if(!buzz.on){ digitalWrite(PIN_BUZZER,HIGH); buzz.on=true; buzz.nextMs=now+130; }
+  else{ digitalWrite(PIN_BUZZER,LOW); buzz.on=false; buzz.left--; buzz.nextMs=now+200; }
+}</pre>
   </div>
 </div>
 
@@ -696,6 +843,10 @@ function setPill(which, state) {
     const p = document.getElementById("pillWs");
     p.className = "pill" + (state==="ok"?" ws-ok":"");
     document.getElementById("pillWsTxt").textContent = state==="ok"?"NODE CONNECTED":"NODE DISCONNECTED";
+  } else if (which === "esp") {
+    const p = document.getElementById("pillEsp");
+    p.className = "pill" + (state==="ok"?" esp-ok":"");
+    document.getElementById("pillEspTxt").textContent = state==="ok"?"ESP32 ONLINE":"ESP32 OFFLINE";
   }
 }
 
@@ -793,9 +944,59 @@ function stopDetection() {
 // ═══════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════
+//  ESP32 STATUS POLL — checks /api/led every 3s
+// ═══════════════════════════════════════════════
+let espOnline = false;
+let espPollTimer = null;
+
+function startEspPoll() {
+  if (espPollTimer) return;
+  espPollTimer = setInterval(async () => {
+    try {
+      const res = await fetch("/api/led", { signal: AbortSignal.timeout(3000) });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.ok) {
+          if (!espOnline) {
+            espOnline = true;
+            setPill("esp", "ok");
+          }
+          return;
+        }
+      }
+    } catch(e) {}
+    if (espOnline) {
+      espOnline = false;
+      setPill("esp", "off");
+    }
+  }, 3000);
+}
+
+// ── Arduino panel toggle ──
+function toggleArduino() {
+  const body = document.getElementById("arduinoBody");
+  const txt  = document.getElementById("arduinoToggleTxt");
+  const open = body.classList.toggle("open");
+  txt.textContent = open ? "▲ Hide Code" : "▼ Show Code";
+}
+
+// ── Copy arduino code (decode HTML entities) ──
+function copyArduino() {
+  const pre = document.getElementById("arduinoCode");
+  const txt = pre.innerText;  // innerText decodes &lt; &gt; &amp; automatically
+  navigator.clipboard.writeText(txt).then(() => {
+    toast("Code copied to clipboard ✅");
+  }).catch(() => {
+    toast("Copy failed — select manually");
+  });
+}
+
 window.addEventListener("load", () => {
   buildTargetsUI();
   connectWS();
+  startEspPoll();
 });
 </script>
 </body>
