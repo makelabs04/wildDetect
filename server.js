@@ -92,9 +92,20 @@ wss.on("connection", (ws) => {
   console.log("🌐 Browser connected");
   ws.send(JSON.stringify({ type: "connected", msg: "Node server ready" }));
 
+  // Server-side ping every 25s to keep connection alive
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === 1) ws.ping();
+  }, 25000);
+
   ws.on("message", (raw) => {
     let data;
     try { data = JSON.parse(raw); } catch { return; }
+
+    // Handle client keepalive ping → reply with pong
+    if (data.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong" }));
+      return;
+    }
 
     if (data.type === "detections") {
       for (const det of data.detections) {
@@ -133,7 +144,12 @@ wss.on("connection", (ws) => {
     }
   });
 
-  ws.on("close", () => console.log("🔌 Browser disconnected"));
+  ws.on("close", () => {
+    clearInterval(pingInterval);
+    console.log("🔌 Browser disconnected");
+  });
+
+  ws.on("error", () => clearInterval(pingInterval));
 });
 
 // ── Serve the single-page frontend ────────────────────────────────────────
