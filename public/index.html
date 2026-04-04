@@ -297,7 +297,7 @@ body { font-family: "Syne", sans-serif; background: var(--bg); color: var(--txt)
 
     <!-- Node voice alert log -->
     <div class="node-log">
-      <div class="node-log-hdr">Node Voice Log <span>🔊</span></div>
+      <div class="node-log-hdr">Alert Log <span>🔊</span></div>
       <div class="log-entries" id="logEntries">
         <div class="log-entry"><span class="log-time">--:--:--</span><span>Waiting for Node server…</span></div>
       </div>
@@ -394,16 +394,9 @@ function connectWS() {
     const data = JSON.parse(e.data);
     if (data.type === "pong") return;  // keepalive reply — ignore
     if (data.type === "alert") {
-      // Node spoke this alert — show it in the log
-      totalAlerts++;
-      document.getElementById("sAlerts").textContent = totalAlerts;
-      const cls = data.label === "bird" ? "log-bird"
-                : (data.label === "elephant" || data.label === "bear") ? "log-danger"
-                : "log-warn";
-      addLog(`🔊 Node spoke: ${data.msg}`, cls);
-      flashDanger(data.label === "elephant" || data.label === "bear");
-      setPillAlert("alerting");
-      setTimeout(() => setPillAlert("quiet"), 3000);
+      // Server confirmed alert — ESP32 LED is now blinking red
+      // (Voice is handled by browser speakAlert, no duplicate needed)
+      addLog("📡 ESP32 LED → RED (" + data.label + ")", "log-warn");
     }
     if (data.type === "connected") {
       addLog("Node: " + data.msg, "");
@@ -424,7 +417,58 @@ function connectWS() {
   };
 }
 
+// ═══════════════════════════════════════════════
+//  BROWSER VOICE — Web Speech API (device speaker)
+// ═══════════════════════════════════════════════
+const ALERT_MESSAGES = {
+  bird:     "Bird detected nearby!",
+  elephant: "Danger! Elephant detected! Stay away!",
+  cow:      "Alert! Cow detected nearby!",
+  sheep:    "Notice! Sheep or goat detected nearby!",
+  horse:    "Horse detected nearby!",
+  dog:      "Dog detected nearby!",
+  cat:      "Feline animal detected! Could be a cat, lion, or tiger. Check carefully!",
+  bear:     "Danger! Bear detected! Move away!",
+  zebra:    "Zebra spotted nearby!",
+  giraffe:  "Giraffe spotted nearby!",
+};
+
+const voiceCooldowns = {};
+
+function speakAlert(label, distance, position) {
+  if (!window.speechSynthesis) return;
+  const now = Date.now();
+  const cooldownMs = parseInt(document.getElementById("cooldownRange").value) * 1000;
+  if (voiceCooldowns[label] && now - voiceCooldowns[label] < cooldownMs) return;
+  voiceCooldowns[label] = now;
+
+  let msg = ALERT_MESSAGES[label] || (label + " detected!");
+  if (distance === "very close") msg = "Warning! " + label + " is very close " + position + "! " + msg;
+  else if (distance === "close") msg += " It is close on your " + position + ".";
+
+  window.speechSynthesis.cancel();
+  const utt = new SpeechSynthesisUtterance(msg);
+  utt.rate = 1.0; utt.volume = 1.0;
+  window.speechSynthesis.speak(utt);
+
+  totalAlerts++;
+  document.getElementById("sAlerts").textContent = totalAlerts;
+  const cls = label === "bird" ? "log-bird"
+            : (label === "elephant" || label === "bear") ? "log-danger"
+            : "log-warn";
+  addLog("\uD83D\uDD0A Spoke: " + msg, cls);
+  flashDanger(label === "elephant" || label === "bear");
+  setPillAlert("alerting");
+  setTimeout(() => setPillAlert("quiet"), 3000);
+}
+
 function sendDetections(detections) {
+  // Speak locally via browser — works regardless of server TTS
+  for (const det of detections) {
+    const label = det.label.toLowerCase();
+    if (ALERT_MESSAGES[label]) speakAlert(label, det.distance, det.position);
+  }
+  // Also send to server for ESP32 LED control
   if (!ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({ type: "detections", detections }));
 }
@@ -671,8 +715,15 @@ function flashDanger(hard=false) {
 
 function reAnnounce() {
   if (!detectedObjs.length) return;
-  sendDetections(detectedObjs.map(d => ({ ...d, _force: true })));
-  toast("Re-announced to Node 🔊");
+  // Force-speak all current detections ignoring cooldown
+  for (const det of detectedObjs) {
+    const label = det.label.toLowerCase();
+    if (ALERT_MESSAGES[label]) {
+      voiceCooldowns[label] = 0; // reset cooldown so it speaks
+      speakAlert(label, det.distance, det.position);
+    }
+  }
+  toast("Re-announced 🔊");
 }
 
 function showLoading(show, txt="") {
