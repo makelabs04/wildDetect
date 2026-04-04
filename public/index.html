@@ -358,7 +358,11 @@ const ctx    = canvas.getContext("2d");
 //  WEBSOCKET — connect to Node server
 // ═══════════════════════════════════════════════
 function connectWS() {
-  const url = `ws://${location.host}`;
+  // Auto-detect: use wss:// if page is on https, ws:// otherwise
+  // Works whether page is served from localhost or a remote domain
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const host  = location.host || "wildeye.makelearners.com";
+  const url   = `${proto}//${host}`;
   ws = new WebSocket(url);
 
   ws.onopen = () => {
