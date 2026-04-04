@@ -357,6 +357,22 @@ const ctx    = canvas.getContext("2d");
 // ═══════════════════════════════════════════════
 //  WEBSOCKET — connect to Node server
 // ═══════════════════════════════════════════════
+let wsPingTimer = null;
+
+function startWsPing() {
+  stopWsPing();
+  // Send a ping every 20s to keep the connection alive through nginx proxies
+  wsPingTimer = setInterval(() => {
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: "ping" }));
+    }
+  }, 20000);
+}
+
+function stopWsPing() {
+  if (wsPingTimer) { clearInterval(wsPingTimer); wsPingTimer = null; }
+}
+
 function connectWS() {
   // Auto-detect: use wss:// if page is on https, ws:// otherwise
   // Works whether page is served from localhost or a remote domain
@@ -369,12 +385,14 @@ function connectWS() {
     setPill("ws", "ok");
     toast("Connected to Node server ✅");
     addLog("Connected to Node server", "");
+    startWsPing();
     // Send current cooldown
     ws.send(JSON.stringify({ type: "setCooldown", value: parseInt(document.getElementById("cooldownRange").value) }));
   };
 
   ws.onmessage = (e) => {
     const data = JSON.parse(e.data);
+    if (data.type === "pong") return;  // keepalive reply — ignore
     if (data.type === "alert") {
       // Node spoke this alert — show it in the log
       totalAlerts++;
@@ -393,13 +411,15 @@ function connectWS() {
   };
 
   ws.onclose = () => {
+    stopWsPing();
     setPill("ws", "off");
-    addLog("Node server disconnected", "log-danger");
+    addLog("Node server disconnected — reconnecting…", "log-danger");
     // Reconnect after 3s
     setTimeout(connectWS, 3000);
   };
 
   ws.onerror = () => {
+    stopWsPing();
     setPill("ws", "off");
   };
 }
