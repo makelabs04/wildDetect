@@ -99,8 +99,12 @@ function setLedRed(label, buzzCount) {
   }, LED_RED_HOLD_MS);
 }
 
+// ── ESP32 last-seen tracker ───────────────────────────────────────────────
+let espLastSeenMs = 0;  // 0 = never connected
+
 // ── ESP32 Poll Endpoint: GET /api/led ─────────────────────────────────────
 app.get("/api/led", (req, res) => {
+  espLastSeenMs = Date.now();  // ESP32 just checked in
   res.json({
     ok: true,
     data: {
@@ -110,6 +114,14 @@ app.get("/api/led", (req, res) => {
     },
   });
   if (espState.buzz > 0) espState.buzz = 0;
+});
+
+// ── ESP32 Status Endpoint: GET /api/esp-status ───────────────────────────
+// ESP32 polls /api/led every 1s — if last seen > 4s ago it is offline
+app.get("/api/esp-status", (req, res) => {
+  const age    = Date.now() - espLastSeenMs;
+  const online = espLastSeenMs > 0 && age < 4000;
+  res.json({ online, age_ms: espLastSeenMs > 0 ? age : null });
 });
 
 // ── WebSocket: receive detections from browser ────────────────────────────
